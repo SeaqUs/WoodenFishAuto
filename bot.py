@@ -1,11 +1,13 @@
 """bot.py — 挂机机器人引擎（后台线程）。
 
 功能：
-1. 空闲检测 + 自动模拟键盘刷功德（GetLastInputInfo 判定真人空闲，
+1. 空闲检测 + 自动点击木鱼刷功德（GetLastInputInfo 判定真人空闲，
    SendInput 注入的模拟输入不会刷新空闲计时）。
 2. 功德宝箱自动化：检测橙黄图标 -> 打开开箱页 -> 点红色「开箱」->
    等动画 -> 点「下一个宝箱」-> 点右上角「x」关闭。
 
+实测结论：该游戏过滤合成键盘输入（注入按键不计功德），但合成鼠标
+点击有效，因此刷功德采用"自动点击木鱼"方式。
 所有自动化仅在用户空闲（idle >= 阈值）时执行，用户一动鼠标/键盘立即挂起。
 """
 import random
@@ -13,8 +15,6 @@ import threading
 import time
 
 import win32
-
-CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
 # ============================================================
@@ -32,6 +32,10 @@ def is_red(rgb):
     """红色 —— 开箱按钮/x 按钮/结果按钮（RGB 约 (231,91,67)）。"""
     R, G, B = rgb
     return R > 200 and G < 120 and B < 110 and (R - G) > 100
+
+
+def _lum(rgb):
+    return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
 
 
 def _bbox_center(pts):
@@ -100,7 +104,7 @@ class BotState:
         self.running = False
         self.status = "已停止"
         self.idle_seconds = 0.0
-        self.keys_sent = 0
+        self.clicks_sent = 0
         self.boxes_opened = 0
         self.last_box_time = None
         self.next_box_countdown = None
@@ -115,9 +119,9 @@ class BotState:
             self.logs.append("[%s] %s" % (time.strftime("%H:%M:%S"), msg))
             self.logs = self.logs[-200:]
 
-    def add_keys(self, n):
+    def add_clicks(self, n):
         with self._lock:
-            self.keys_sent += n
+            self.clicks_sent += n
 
     def mark_box(self):
         with self._lock:
@@ -137,7 +141,7 @@ class BotState:
                 "running": self.running,
                 "status": self.status,
                 "idle_seconds": self.idle_seconds,
-                "keys_sent": self.keys_sent,
+                "clicks_sent": self.clicks_sent,
                 "boxes_opened": self.boxes_opened,
                 "next_box_countdown": self.next_box_countdown,
                 "logs": list(self.logs),
@@ -153,10 +157,11 @@ class Bot:
     def __init__(self, cfg):
         self.cfg = cfg
         self.state = BotState()
-        self.panel_hwnd = None
         self.box_busy = False
         self._stop = threading.Event()
         self._thread = None
+        self._fish_cache_key = None
+        self._fish_center = None
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -164,7 +169,7 @@ class Bot:
         self._stop.clear()
         self.state.running = True
         self.state.set_status("运行中")
-        self.state.log("机器人已启动")
+        self.state.log("机器人已启动（点击木鱼刷功德）")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -184,7 +189,6 @@ class Bot:
                 threshold = self.cfg.get("idle_threshold_seconds", 30)
 
                 if idle >= threshold and not self.box_busy:
-                    # 用户空闲，执行自动化
                     if self.cfg.get("farm_enabled"):
                         self._farm_burst()
 
@@ -205,24 +209,65 @@ class Bot:
                 self.state.log("运行异常: %r" % (e,))
             time.sleep(0.2)
 
-    # ---------------- 挂机刷功德 ----------------
+    # ---------------- 点击木鱼刷功德 ----------------
     def _farm_burst(self):
-        self.state.set_status("挂机刷功德中")
-        if self.panel_hwnd:
-            win32.set_foreground(self.panel_hwnd)
-        n = int(self.cfg.get("keys_per_burst", 12))
-        delay = float(self.cfg.get("type_delay_ms", 25)) / 1000.0
+        gw = find_game_window(self.cfg)
+        if gw is None:
+            return
+        rect = win32.window_rect(gw["hwnd"])
+        if rect is None:
+            return
+        self.state.set_status("点击木鱼刷功德中")
+        # 用户空闲，把游戏带到前台确保点击命中
+        win32.set_foreground(gw["hwnd"])
+        cx, cy = self._get_fish_center(rect)
+        if cx is None:
+            return
+        n = int(self.cfg.get("clicks_per_burst", 15))
+        interval = float(self.cfg.get("click_interval_ms", 60)) / 1000.0
         sent = 0
         for _ in range(n):
             if self._stop.is_set():
                 break
             if win32.idle_seconds() < self.cfg.get("idle_threshold_seconds", 30):
                 break  # 用户回来了
-            if win32.type_char(random.choice(CHARS)):
-                sent += 1
-            time.sleep(delay)
+            # 轻微随机抖动，避免每次点同一像素
+            jx = random.randint(-3, 3)
+            jy = random.randint(-3, 3)
+            win32.click(rect[0] + cx + jx, rect[1] + cy + jy, settle=0.0)
+            sent += 1
+            time.sleep(interval)
         if sent:
-            self.state.add_keys(sent)
+            self.state.add_clicks(sent)
+
+    def _get_fish_center(self, rect):
+        """返回木鱼中心（相对窗口）。优先用配置值，否则动态检测。"""
+        rel = self.cfg.get("fish_center_rel")
+        if rel and len(rel) == 2:
+            return int(rel[0]), int(rel[1])
+        # 动态检测回退：中段深色像素中心
+        if self._fish_cache_key == rect and self._fish_center:
+            return self._fish_center
+        l, t, r, b = rect
+        w, h = r - l, b - t
+        if w <= 0 or h <= 0:
+            return None
+        ww, hh, buf = win32.capture_region(l, t, w, h)
+        y0, y1 = int(h * 0.45), int(h * 0.80)
+        pts = []
+        for yy in range(y0, y1):
+            for xx in range(w):
+                i = (yy * w + xx) * 4
+                rgb = (buf[i + 2], buf[i + 1], buf[i])
+                if _lum(rgb) < 80:
+                    pts.append((xx, yy))
+        if len(pts) < 100:
+            cx, cy = w // 2, int(h * 0.66)
+        else:
+            cx, cy = _bbox_center(pts)
+        self._fish_cache_key = rect
+        self._fish_center = (cx, cy)
+        return (cx, cy)
 
     # ---------------- 宝箱自动化 ----------------
     def _box_check(self):
@@ -236,7 +281,6 @@ class Bot:
         w, h = r - l, b - t
         if w <= 0 or h <= 0:
             return
-        # 用户空闲，先把游戏带到前台，确保能截到正确画面
         win32.set_foreground(gw["hwnd"])
         time.sleep(0.3)
         ww, hh, buf = win32.capture_region(l, t, w, h)

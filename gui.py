@@ -24,12 +24,12 @@ class App:
         status.pack(fill="x", padx=10, pady=(10, 4))
         self.var_status = tk.StringVar(value="已停止")
         self.var_idle = tk.StringVar(value="空闲: -")
-        self.var_keys = tk.StringVar(value="已发送按键: 0")
+        self.var_clicks = tk.StringVar(value="已点击木鱼: 0")
         self.var_boxes = tk.StringVar(value="已开宝箱: 0")
         self.var_countdown = tk.StringVar(value="距下个宝箱: 待定")
         ttk.Label(status, textvariable=self.var_status, font=("", 12, "bold")).pack(anchor="w")
         ttk.Label(status, textvariable=self.var_idle).pack(anchor="w", pady=(4, 0))
-        ttk.Label(status, textvariable=self.var_keys).pack(anchor="w")
+        ttk.Label(status, textvariable=self.var_clicks).pack(anchor="w")
         ttk.Label(status, textvariable=self.var_boxes).pack(anchor="w")
         ttk.Label(status, textvariable=self.var_countdown).pack(anchor="w")
 
@@ -53,9 +53,9 @@ class App:
         ttk.Spinbox(row1, from_=5, to=600, textvariable=self.var_idle_th, width=8).pack(side="left", padx=6)
         row2 = ttk.Frame(param)
         row2.pack(fill="x", pady=(4, 0))
-        ttk.Label(row2, text="按键间隔(毫秒):").pack(side="left")
-        self.var_delay = tk.IntVar(value=int(self.cfg.get("type_delay_ms", 25)))
-        ttk.Spinbox(row2, from_=5, to=500, textvariable=self.var_delay, width=8).pack(side="left", padx=6)
+        ttk.Label(row2, text="点击间隔(毫秒):").pack(side="left")
+        self.var_delay = tk.IntVar(value=int(self.cfg.get("click_interval_ms", 60)))
+        ttk.Spinbox(row2, from_=10, to=1000, textvariable=self.var_delay, width=8).pack(side="left", padx=6)
 
         # 变量变化即保存
         self.var_idle_th.trace_add("write", lambda *_: self._save_cfg())
@@ -90,7 +90,7 @@ class App:
             self.cfg["farm_enabled"] = bool(self.var_farm.get())
             self.cfg["box_enabled"] = bool(self.var_box.get())
             self.cfg["idle_threshold_seconds"] = int(self.var_idle_th.get())
-            self.cfg["type_delay_ms"] = int(self.var_delay.get())
+            self.cfg["click_interval_ms"] = int(self.var_delay.get())
             config_mod.save(self.cfg_path, self.cfg)
         except Exception:
             pass
@@ -99,7 +99,7 @@ class App:
         snap = self.bot.state.snapshot()
         self.var_status.set("状态: " + snap["status"])
         self.var_idle.set("空闲: %.1f 秒" % snap["idle_seconds"])
-        self.var_keys.set("已发送按键: %d" % snap["keys_sent"])
+        self.var_clicks.set("已点击木鱼: %d" % snap["clicks_sent"])
         self.var_boxes.set("已开宝箱: %d" % snap["boxes_opened"])
         cd = snap["next_box_countdown"]
         if cd is not None:

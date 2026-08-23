@@ -6,11 +6,12 @@ DEFAULTS = {
     # 游戏定位
     "game_title": "电子木鱼",
     "game_process": "ElectronicWoodfish.exe",
-    # 挂机刷功德
+    # 挂机刷功德（点击木鱼）
     "farm_enabled": True,
     "idle_threshold_seconds": 30,
-    "type_delay_ms": 25,
-    "keys_per_burst": 12,
+    "click_interval_ms": 60,
+    "clicks_per_burst": 15,
+    "fish_center_rel": [112, 152],
     # 宝箱自动化
     "box_enabled": True,
     "box_check_interval_seconds": 3,

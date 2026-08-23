@@ -112,10 +112,12 @@ def tap_key(vk):
     key_up(vk)
 
 
-def type_char(ch: str) -> bool:
+def type_char(ch: str, hold_ms: float = 40) -> bool:
     """输入单个可打印字符（基于虚拟键，等价于真实敲键）。
 
     通过 VkKeyScan 把字符映射为虚拟键，需要 Shift 时自动按/放。
+    hold_ms 为按键保持时间（毫秒），真实敲键会按住几十毫秒，
+    若游戏按 GetAsyncKeyState 轮询，保持时间过短会被漏掉。
     返回是否成功（字符无对应虚拟键时返回 False）。
     """
     if not ch or len(ch) != 1:
@@ -129,18 +131,20 @@ def type_char(ch: str) -> bool:
     if need_shift:
         key_down(VK_SHIFT)
     key_down(vk)
+    if hold_ms:
+        time.sleep(hold_ms / 1000.0)
     key_up(vk)
     if need_shift:
         key_up(VK_SHIFT)
     return True
 
 
-def type_text(text: str, delay_ms: float = 0.0):
-    """输入一串文本，字符间可插入延迟（秒）。"""
+def type_text(text: str, delay_ms: float = 0.0, hold_ms: float = 40):
+    """输入一串文本，字符间可插入延迟（毫秒）。"""
     for ch in text:
-        type_char(ch)
+        type_char(ch, hold_ms=hold_ms)
         if delay_ms:
-            time.sleep(delay_ms)
+            time.sleep(delay_ms / 1000.0)
 
 
 # ============================================================
