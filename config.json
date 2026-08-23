@@ -1,0 +1,13 @@
+{
+  "game_title": "电子木鱼",
+  "game_process": "ElectronicWoodfish.exe",
+  "farm_enabled": true,
+  "idle_threshold_seconds": 30,
+  "type_delay_ms": 25,
+  "keys_per_burst": 12,
+  "box_enabled": true,
+  "box_check_interval_seconds": 3,
+  "box_wait_after_open_seconds": 6.0,
+  "icon_min_pixels": 20,
+  "red_min_pixels": 100
+}
