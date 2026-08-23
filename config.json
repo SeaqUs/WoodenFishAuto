@@ -5,10 +5,20 @@
   "idle_threshold_seconds": 30,
   "click_interval_ms": 60,
   "clicks_per_burst": 15,
-  "fish_center_rel": [112, 152],
+  "fish_center_rel": [
+    112,
+    152
+  ],
   "box_enabled": true,
   "box_check_interval_seconds": 3,
   "box_wait_after_open_seconds": 6.0,
+  "box_settle_ms": 600,
+  "box_icon_region": [
+    0.68,
+    0.38,
+    0.92,
+    0.62
+  ],
   "icon_min_pixels": 20,
   "red_min_pixels": 100
 }

@@ -282,12 +282,15 @@ class Bot:
         if w <= 0 or h <= 0:
             return
         win32.set_foreground(gw["hwnd"])
-        time.sleep(0.3)
+        # 等待"功德+1"点击特效消退（实测约 400ms 消退），避免误判为宝箱图标
+        time.sleep(float(self.cfg.get("box_settle_ms", 600)) / 1000.0)
+        # 只在图标固定区域（右上角）内扫描，进一步排除木鱼特效/皮肤干扰
+        x0, y0, x1, y1 = self._icon_region(w, h)
         ww, hh, buf = win32.capture_region(l, t, w, h)
         pts = [
             (xx, yy)
-            for yy in range(h)
-            for xx in range(w)
+            for yy in range(y0, y1)
+            for xx in range(x0, x1)
             if is_warm(win32.pixel_at(buf, w, xx, yy))
         ]
         if len(pts) < self.cfg.get("icon_min_pixels", 20):
@@ -295,6 +298,10 @@ class Bot:
         cx, cy = _bbox_center(pts)
         self.state.log("检测到功德宝箱图标 @(%d,%d)" % (l + cx, t + cy))
         self._open_box_flow(l + cx, t + cy)
+
+    def _icon_region(self, w, h):
+        fx = self.cfg.get("box_icon_region", [0.68, 0.38, 0.92, 0.62])
+        return int(w * fx[0]), int(h * fx[1]), int(w * fx[2]), int(h * fx[3])
 
     def _open_box_flow(self, ix, iy):
         self.box_busy = True

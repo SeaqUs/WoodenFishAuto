@@ -16,6 +16,8 @@ DEFAULTS = {
     "box_enabled": True,
     "box_check_interval_seconds": 3,
     "box_wait_after_open_seconds": 6.0,
+    "box_settle_ms": 600,
+    "box_icon_region": [0.68, 0.38, 0.92, 0.62],
     # 颜色判定阈值（实测校准）
     "icon_min_pixels": 20,
     "red_min_pixels": 100,
