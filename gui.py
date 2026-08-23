@@ -3,7 +3,6 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext
 
 import config as config_mod
-import win32
 
 
 class App:
@@ -69,19 +68,11 @@ class App:
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _panel_hwnd(self):
-        try:
-            self.root.update_idletasks()
-            return win32.top_level_hwnd(self.root.winfo_id())
-        except Exception:
-            return None
-
     def _toggle(self):
         if self.bot.state.running:
             self.bot.stop()
             self.btn_start.config(text="启动")
         else:
-            self.bot.panel_hwnd = self._panel_hwnd()
             self.bot.start()
             self.btn_start.config(text="停止")
 
