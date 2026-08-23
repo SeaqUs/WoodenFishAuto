@@ -1,20 +1,21 @@
 """bot.py — 挂机机器人引擎（后台线程）。
 
 功能：
-1. 空闲检测 + 自动点击木鱼刷功德（GetLastInputInfo 判定真人空闲，
-   SendInput 注入的模拟输入不会刷新空闲计时）。
+1. 空闲检测（InputMonitor 低层钩子，只统计真实物理输入）+
+   自动刷功德（支持"点击木鱼"与"键盘输入(note.ms)"两种方式切换）。
 2. 功德宝箱自动化：检测橙黄图标 -> 打开开箱页 -> 点红色「开箱」->
    等动画 -> 点「下一个宝箱」-> 点右上角「x」关闭。
 
-实测结论：该游戏过滤合成键盘输入（注入按键不计功德），但合成鼠标
-点击有效，因此刷功德采用"自动点击木鱼"方式。
-所有自动化仅在用户空闲（idle >= 阈值）时执行，用户一动鼠标/键盘立即挂起。
+所有自动化仅在用户空闲（idle >= 阈值）时执行；程序自己的点击/按键
+不会被误判为"用户活跃"，用户一动鼠标/键盘立即挂起。
 """
 import random
 import threading
 import time
 
 import win32
+
+CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
 # ============================================================
@@ -104,7 +105,7 @@ class BotState:
         self.running = False
         self.status = "已停止"
         self.idle_seconds = 0.0
-        self.clicks_sent = 0
+        self.actions_sent = 0
         self.boxes_opened = 0
         self.last_box_time = None
         self.next_box_countdown = None
@@ -119,9 +120,9 @@ class BotState:
             self.logs.append("[%s] %s" % (time.strftime("%H:%M:%S"), msg))
             self.logs = self.logs[-200:]
 
-    def add_clicks(self, n):
+    def add_actions(self, n):
         with self._lock:
-            self.clicks_sent += n
+            self.actions_sent += n
 
     def mark_box(self):
         with self._lock:
@@ -141,7 +142,7 @@ class BotState:
                 "running": self.running,
                 "status": self.status,
                 "idle_seconds": self.idle_seconds,
-                "clicks_sent": self.clicks_sent,
+                "actions_sent": self.actions_sent,
                 "boxes_opened": self.boxes_opened,
                 "next_box_countdown": self.next_box_countdown,
                 "logs": list(self.logs),
@@ -157,24 +158,29 @@ class Bot:
     def __init__(self, cfg):
         self.cfg = cfg
         self.state = BotState()
+        self.monitor = win32.InputMonitor()
         self.box_busy = False
         self._stop = threading.Event()
         self._thread = None
         self._fish_cache_key = None
         self._fish_center = None
+        self._notems_opened = False
 
     def start(self):
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self.monitor.start()
         self.state.running = True
         self.state.set_status("运行中")
-        self.state.log("机器人已启动（点击木鱼刷功德）")
+        method = self.cfg.get("farm_method", "click")
+        self.state.log("机器人已启动（%s刷功德）" % ("点击木鱼" if method != "keyboard" else "键盘输入note.ms"))
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self):
         self._stop.set()
+        self.monitor.stop()
         self.state.running = False
         self.state.set_status("已停止")
         self.state.log("机器人已停止")
@@ -184,7 +190,7 @@ class Bot:
         last_box_check = 0.0
         while not self._stop.is_set():
             try:
-                idle = win32.idle_seconds()
+                idle = self.monitor.idle_seconds()
                 self.state.idle_seconds = idle
                 threshold = self.cfg.get("idle_threshold_seconds", 30)
 
@@ -209,8 +215,15 @@ class Bot:
                 self.state.log("运行异常: %r" % (e,))
             time.sleep(0.2)
 
-    # ---------------- 点击木鱼刷功德 ----------------
+    # ---------------- 刷功德（点击木鱼 / 键盘输入 note.ms） ----------------
     def _farm_burst(self):
+        method = self.cfg.get("farm_method", "click")
+        if method == "keyboard":
+            self._keyboard_burst()
+        else:
+            self._click_burst()
+
+    def _click_burst(self):
         gw = find_game_window(self.cfg)
         if gw is None:
             return
@@ -229,7 +242,7 @@ class Bot:
         for _ in range(n):
             if self._stop.is_set():
                 break
-            if win32.idle_seconds() < self.cfg.get("idle_threshold_seconds", 30):
+            if self.monitor.idle_seconds() < self.cfg.get("idle_threshold_seconds", 30):
                 break  # 用户回来了
             # 轻微随机抖动，避免每次点同一像素
             jx = random.randint(-3, 3)
@@ -238,7 +251,37 @@ class Bot:
             sent += 1
             time.sleep(interval)
         if sent:
-            self.state.add_clicks(sent)
+            self.state.add_actions(sent)
+
+    def _keyboard_burst(self):
+        self.state.set_status("键盘输入刷功德中(note.ms)")
+        self._ensure_notems()
+        n = int(self.cfg.get("clicks_per_burst", 15))
+        interval = float(self.cfg.get("click_interval_ms", 60)) / 1000.0
+        sent = 0
+        for _ in range(n):
+            if self._stop.is_set():
+                break
+            if self.monitor.idle_seconds() < self.cfg.get("idle_threshold_seconds", 30):
+                break  # 用户回来了
+            if win32.type_char(random.choice(CHARS), hold_ms=40):
+                sent += 1
+            time.sleep(interval)
+        if sent:
+            self.state.add_actions(sent)
+
+    def _ensure_notems(self):
+        """首次调用时打开 note.ms 页面并等待其加载聚焦。"""
+        if self._notems_opened:
+            return
+        url = self.cfg.get("notems_url", "https://note.ms/muyu")
+        ok = win32.open_url(url)
+        self._notems_opened = True
+        if ok:
+            self.state.log("已打开 note.ms: %s" % url)
+        else:
+            self.state.log("打开 note.ms 失败: %s" % url)
+        time.sleep(3.0)  # 等浏览器加载并聚焦文本区
 
     def _get_fish_center(self, rect):
         """返回木鱼中心（相对窗口）。优先用配置值，否则动态检测。"""

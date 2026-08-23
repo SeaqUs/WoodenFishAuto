@@ -9,7 +9,9 @@
 - 记事本/前台窗口辅助
 """
 import ctypes
+import os
 import subprocess
+import threading
 import time
 from ctypes import wintypes
 
@@ -45,10 +47,11 @@ class POINT(ctypes.Structure):
 
 
 def idle_seconds() -> float:
-    """返回自最后一次真实用户输入（键盘/鼠标）以来的秒数。
+    """返回系统级"最后一次输入"距今秒数（GetLastInputInfo）。
 
-    关键特性：GetLastInputInfo 只统计物理 HID 输入，SendInput 注入的
-    模拟输入不会刷新它，因此程序自己刷按键不会误判为"用户已回来"。
+    注意：GetLastInputInfo 也会被 SendInput 注入的输入刷新，因此它
+    无法区分"真实用户输入"与"程序模拟输入"。精确空闲检测请使用
+    InputMonitor（低层钩子 + 注入标志位过滤）。
     """
     lii = LASTINPUTINFO()
     lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
@@ -305,8 +308,6 @@ def enum_windows():
 
 def process_name(pid) -> str:
     """通过 pid 解析进程可执行文件名（用于定位游戏）。"""
-    import os
-
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not h:
@@ -378,3 +379,151 @@ def launch_notepad():
                 return w["hwnd"]
         time.sleep(0.3)
     return None
+
+
+def open_url(url):
+    """用默认浏览器打开 url。返回是否成功。"""
+    try:
+        os.startfile(url)  # noqa
+        return True
+    except Exception:
+        try:
+            import webbrowser
+
+            return bool(webbrowser.open(url))
+        except Exception:
+            return False
+
+
+# ============================================================
+# 物理输入监听（低层钩子，区分注入输入）
+# ============================================================
+
+WH_KEYBOARD_LL = 13
+WH_MOUSE_LL = 14
+LLKHF_INJECTED = 0x00000010
+LLMHF_INJECTED = 0x00000001
+PM_REMOVE = 0x0001
+
+
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+_LowLevelHookProc = ctypes.WINFUNCTYPE(
+    ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
+)
+
+# 关键：正确设置返回/参数类型，避免 64 位下句柄与坐标被截断
+user32.SetWindowsHookExW.restype = ctypes.c_void_p
+user32.SetWindowsHookExW.argtypes = [
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+]
+user32.CallNextHookEx.restype = ctypes.c_ssize_t
+user32.CallNextHookEx.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_int,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
+user32.PeekMessageW.argtypes = [
+    ctypes.POINTER(wintypes.MSG),
+    ctypes.c_void_p,
+    wintypes.UINT,
+    wintypes.UINT,
+    wintypes.UINT,
+]
+user32.PeekMessageW.restype = wintypes.BOOL
+kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+kernel32.GetModuleHandleW.argtypes = [ctypes.c_void_p]
+
+
+class InputMonitor:
+    """监听"真实物理输入"，用于精确空闲检测。
+
+    通过 WH_MOUSE_LL / WH_KEYBOARD_LL 低层钩子，依据 LLMHF_INJECTED /
+    LLKHF_INJECTED 标志位，只记录物理键盘/鼠标输入的时间戳，过滤掉
+    SendInput/mouse_event 等注入输入。这样程序自己刷的功德不会误判成
+    "用户已回来"。
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._last = time.monotonic()
+        self._running = False
+        self._thread = None
+        self._cb_refs = []
+
+    def idle_seconds(self):
+        with self._lock:
+            return time.monotonic() - self._last
+
+    def _touch(self):
+        with self._lock:
+            self._last = time.monotonic()
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._last = time.monotonic()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+
+    def _run(self):
+        hmod = kernel32.GetModuleHandleW(None)
+        mouse_cb = _LowLevelHookProc(self._mouse_proc)
+        key_cb = _LowLevelHookProc(self._key_proc)
+        self._cb_refs = [mouse_cb, key_cb]  # 防止回调被回收
+        h_mouse = user32.SetWindowsHookExW(WH_MOUSE_LL, mouse_cb, hmod, 0)
+        h_key = user32.SetWindowsHookExW(WH_KEYBOARD_LL, key_cb, hmod, 0)
+        msg = wintypes.MSG()
+        try:
+            while self._running:
+                while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+                time.sleep(0.005)
+        finally:
+            if h_mouse:
+                user32.UnhookWindowsHookEx(h_mouse)
+            if h_key:
+                user32.UnhookWindowsHookEx(h_key)
+
+    def _mouse_proc(self, nCode, wParam, lParam):
+        if nCode >= 0:
+            data = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+            if not (data.flags & LLMHF_INJECTED):
+                self._touch()
+        return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+    def _key_proc(self, nCode, wParam, lParam):
+        if nCode >= 0:
+            data = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+            if not (data.flags & LLKHF_INJECTED):
+                self._touch()
+        return user32.CallNextHookEx(None, nCode, wParam, lParam)

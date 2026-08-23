@@ -23,12 +23,12 @@ class App:
         status.pack(fill="x", padx=10, pady=(10, 4))
         self.var_status = tk.StringVar(value="已停止")
         self.var_idle = tk.StringVar(value="空闲: -")
-        self.var_clicks = tk.StringVar(value="已点击木鱼: 0")
+        self.var_actions = tk.StringVar(value="已刷功德: 0 次")
         self.var_boxes = tk.StringVar(value="已开宝箱: 0")
         self.var_countdown = tk.StringVar(value="距下个宝箱: 待定")
         ttk.Label(status, textvariable=self.var_status, font=("", 12, "bold")).pack(anchor="w")
         ttk.Label(status, textvariable=self.var_idle).pack(anchor="w", pady=(4, 0))
-        ttk.Label(status, textvariable=self.var_clicks).pack(anchor="w")
+        ttk.Label(status, textvariable=self.var_actions).pack(anchor="w")
         ttk.Label(status, textvariable=self.var_boxes).pack(anchor="w")
         ttk.Label(status, textvariable=self.var_countdown).pack(anchor="w")
 
@@ -41,6 +41,14 @@ class App:
         self.var_box = tk.BooleanVar(value=bool(self.cfg.get("box_enabled")))
         ttk.Checkbutton(ctrl, text="挂机刷功德", variable=self.var_farm, command=self._save_cfg).pack(anchor="w", pady=(6, 0))
         ttk.Checkbutton(ctrl, text="功德宝箱自动化", variable=self.var_box, command=self._save_cfg).pack(anchor="w")
+
+        # 刷功德方式（单选）
+        self.var_method = tk.StringVar(value=str(self.cfg.get("farm_method", "click")))
+        mrow = ttk.Frame(ctrl)
+        mrow.pack(fill="x", pady=(8, 0))
+        ttk.Label(mrow, text="刷功德方式:").pack(side="left")
+        ttk.Radiobutton(mrow, text="点击木鱼", variable=self.var_method, value="click", command=self._save_cfg).pack(side="left", padx=4)
+        ttk.Radiobutton(mrow, text="键盘输入(note.ms)", variable=self.var_method, value="keyboard", command=self._save_cfg).pack(side="left", padx=4)
 
         # 参数区
         param = ttk.LabelFrame(self.root, text="参数", padding=10)
@@ -80,6 +88,7 @@ class App:
         try:
             self.cfg["farm_enabled"] = bool(self.var_farm.get())
             self.cfg["box_enabled"] = bool(self.var_box.get())
+            self.cfg["farm_method"] = str(self.var_method.get())
             self.cfg["idle_threshold_seconds"] = int(self.var_idle_th.get())
             self.cfg["click_interval_ms"] = int(self.var_delay.get())
             config_mod.save(self.cfg_path, self.cfg)
@@ -90,7 +99,7 @@ class App:
         snap = self.bot.state.snapshot()
         self.var_status.set("状态: " + snap["status"])
         self.var_idle.set("空闲: %.1f 秒" % snap["idle_seconds"])
-        self.var_clicks.set("已点击木鱼: %d" % snap["clicks_sent"])
+        self.var_actions.set("已刷功德: %d 次" % snap["actions_sent"])
         self.var_boxes.set("已开宝箱: %d" % snap["boxes_opened"])
         cd = snap["next_box_countdown"]
         if cd is not None:

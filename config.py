@@ -6,8 +6,10 @@ DEFAULTS = {
     # 游戏定位
     "game_title": "电子木鱼",
     "game_process": "ElectronicWoodfish.exe",
-    # 挂机刷功德（点击木鱼）
+    # 挂机刷功德（点击木鱼 / 键盘输入 note.ms）
     "farm_enabled": True,
+    "farm_method": "click",
+    "notems_url": "https://note.ms/muyu",
     "idle_threshold_seconds": 30,
     "click_interval_ms": 60,
     "clicks_per_burst": 15,
