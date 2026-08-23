@@ -81,12 +81,36 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
 class INPUT_UNION(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT)]
+    # 必须包含全部三种结构，联合体大小由最大的 MOUSEINPUT 决定（64位下 32 字节）
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
 
 
 class INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("union", INPUT_UNION)]
+
+
+user32.SendInput.restype = wintypes.UINT
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 
 
 def _key_input(vk, flags):
@@ -100,11 +124,11 @@ def _key_input(vk, flags):
 
 
 def key_down(vk):
-    user32.SendInput(1, ctypes.byref(_key_input(vk, 0)), ctypes.sizeof(INPUT))
+    return user32.SendInput(1, ctypes.byref(_key_input(vk, 0)), ctypes.sizeof(INPUT))
 
 
 def key_up(vk):
-    user32.SendInput(
+    return user32.SendInput(
         1, ctypes.byref(_key_input(vk, KEYEVENTF_KEYUP)), ctypes.sizeof(INPUT)
     )
 

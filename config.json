@@ -2,7 +2,7 @@
   "game_title": "电子木鱼",
   "game_process": "ElectronicWoodfish.exe",
   "farm_enabled": true,
-  "farm_method": "click",
+  "farm_method": "keyboard",
   "notems_url": "https://note.ms/muyu",
   "idle_threshold_seconds": 30,
   "click_interval_ms": 60,

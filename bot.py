@@ -164,7 +164,8 @@ class Bot:
         self._thread = None
         self._fish_cache_key = None
         self._fish_center = None
-        self._notems_opened = False
+        self._notems_hwnd = None
+        self._notems_tried = False
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -255,7 +256,11 @@ class Bot:
 
     def _keyboard_burst(self):
         self.state.set_status("键盘输入刷功德中(note.ms)")
-        self._ensure_notems()
+        if not self._ensure_notems():
+            return
+        # 宝箱自动化会聚焦游戏，这里把 note.ms 拉回前台
+        win32.set_foreground(self._notems_hwnd)
+        time.sleep(0.2)
         n = int(self.cfg.get("clicks_per_burst", 15))
         interval = float(self.cfg.get("click_interval_ms", 60)) / 1000.0
         sent = 0
@@ -270,18 +275,37 @@ class Bot:
         if sent:
             self.state.add_actions(sent)
 
+    def _find_notems_window(self):
+        for w in win32.enum_windows():
+            if w["visible"] and "note.ms" in w["title"].lower():
+                return w["hwnd"]
+        return None
+
     def _ensure_notems(self):
-        """首次调用时打开 note.ms 页面并等待其加载聚焦。"""
-        if self._notems_opened:
-            return
+        """首次调用时打开 note.ms、聚焦并点击输入区，确保光标在文本框。"""
+        if self._notems_hwnd:
+            return True
+        if self._notems_tried:
+            return False
+        self._notems_tried = True
         url = self.cfg.get("notems_url", "https://note.ms/muyu")
-        ok = win32.open_url(url)
-        self._notems_opened = True
-        if ok:
-            self.state.log("已打开 note.ms: %s" % url)
-        else:
-            self.state.log("打开 note.ms 失败: %s" % url)
-        time.sleep(3.0)  # 等浏览器加载并聚焦文本区
+        win32.open_url(url)
+        self.state.log("已请求打开 note.ms: %s" % url)
+        time.sleep(4.0)  # 等浏览器加载页面
+        self._notems_hwnd = self._find_notems_window()
+        if not self._notems_hwnd:
+            self.state.log("未找到 note.ms 窗口，跳过键盘输入")
+            return False
+        # 聚焦浏览器并点击输入区中心（note.ms 的文本框占满内容区）
+        win32.set_foreground(self._notems_hwnd)
+        time.sleep(0.5)
+        rect = win32.window_rect(self._notems_hwnd)
+        if rect:
+            cx = rect[0] + int((rect[2] - rect[0]) * 0.5)
+            cy = rect[1] + int((rect[3] - rect[1]) * 0.6)
+            win32.click(cx, cy, settle=0.0)
+            time.sleep(0.3)
+        return True
 
     def _get_fish_center(self, rect):
         """返回木鱼中心（相对窗口）。优先用配置值，否则动态检测。"""
