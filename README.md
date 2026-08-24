@@ -62,6 +62,18 @@ WoodenFishAuto/
 └── config.json    # 运行时配置
 ```
 
+## 打包 exe
+
+```bash
+python -m PyInstaller --onefile --windowed --icon=icon.ico --name=WoodenFishAuto --add-data "icon.ico;." --noconfirm main.py
+```
+
+生成的单文件在 `dist/WoodenFishAuto.exe`，双击即用（`config.json` 会自动生成在 exe 同目录）。
+
+## 许可
+
+[MIT License](LICENSE)，可自由使用、修改、分发。
+
 ## 免责声明
 
 仅用于个人学习与自家电脑上单机/挂机游戏的自用自动化，请自行确认不违反游戏服务条款。
