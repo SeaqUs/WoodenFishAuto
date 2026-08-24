@@ -14,6 +14,7 @@ class App:
         root.title("电子木鱼自动挂机")
         root.geometry("420x560")
         root.resizable(False, False)
+        self._last_logs = None
         self._build()
         self._refresh()
 
@@ -112,11 +113,19 @@ class App:
             self.var_countdown.set("距下个宝箱: 待定（开箱后开始计时）")
 
         logs = snap["logs"]
-        if logs:
+        if logs != self._last_logs:
+            self._last_logs = logs
+            # 保存当前滚动位置：在底部则自动跟随，用户上滚则保持不动
+            at_bottom = self.txt_log.yview()[1] >= 0.99
+            first_visible = self.txt_log.yview()[0]
             self.txt_log.config(state="normal")
             self.txt_log.delete("1.0", "end")
-            self.txt_log.insert("end", "\n".join(logs[-14:]))
+            self.txt_log.insert("end", "\n".join(logs))
             self.txt_log.config(state="disabled")
+            if at_bottom:
+                self.txt_log.see("end")
+            else:
+                self.txt_log.yview_moveto(first_visible)
         self.root.after(300, self._refresh)
 
     def _on_close(self):
