@@ -72,7 +72,10 @@ python -m PyInstaller --onefile --windowed --icon=icon.ico --name=WoodenFishAuto
 
 ## 许可
 
-[MIT License](LICENSE)，可自由使用、修改、分发。
+[PolyForm Noncommercial License 1.0.0](LICENSE)。
+
+- ✅ 允许：修改、克隆、分发（用于非商业目的，如个人学习、研究、爱好、教育、公益等）
+- ❌ 禁止：商业用途，包括二次售卖、盈利、任何以商业利益或金钱报酬为目的的使用或分发
 
 ## 免责声明
 
