@@ -370,19 +370,51 @@ class Bot:
         fx = self.cfg.get("box_icon_region", [0.68, 0.38, 0.92, 0.62])
         return int(w * fx[0]), int(h * fx[1]), int(w * fx[2]), int(h * fx[3])
 
+    def _btn_y_frac(self):
+        return float(self.cfg.get("box_button_y_frac", 0.75))
+
+    def _wait_box_window(self, timeout=5.0):
+        """轮询等待开箱页窗口出现。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            box, rect = find_box_window()
+            if box is not None:
+                return box, rect
+            time.sleep(0.3)
+        return None, None
+
+    def _wait_three_buttons(self, timeout=15.0):
+        """轮询等待结果页出现 3 个红按钮（含稳定性确认），返回 (rect, btns)。"""
+        deadline = time.time() + timeout
+        yf = self._btn_y_frac()
+        while time.time() < deadline:
+            box, rect = find_box_window()
+            if box is not None:
+                btns = self._red_clusters_in(rect, yf)
+                if len(btns) >= 3:
+                    time.sleep(0.4)  # 稳定性确认：稍后再测一次
+                    box2, rect2 = find_box_window()
+                    if box2 is not None:
+                        btns2 = self._red_clusters_in(rect2, yf)
+                        if len(btns2) >= 3:
+                            return rect2, btns2
+            time.sleep(0.4)
+        return None, None
+
     def _open_box_flow(self, ix, iy):
         self.box_busy = True
         try:
             self.state.set_status("开箱流程中")
             win32.click(ix, iy)
-            time.sleep(2.0)
 
-            box, rect = find_box_window()
+            box, rect = self._wait_box_window(5.0)
             if box is None:
                 self.state.log("点击图标后未找到开箱页窗口")
                 return
+            win32.set_foreground(box["hwnd"])
+            time.sleep(0.15)
 
-            open_btn = self._red_bbox_in(rect, 0.6, self.cfg.get("red_min_pixels", 100))
+            open_btn = self._red_bbox_in(rect, self._btn_y_frac(), self.cfg.get("red_min_pixels", 100))
             if open_btn is None:
                 self.state.log("功德不足(<1000)，开箱按钮非红，关闭页面继续挂机")
                 self._click_close(rect)
@@ -390,23 +422,41 @@ class Bot:
 
             self.state.log("点击「开箱」")
             win32.click(rect[0] + open_btn[0], rect[1] + open_btn[1])
-            time.sleep(float(self.cfg.get("box_wait_after_open_seconds", 6.0)))
 
-            box2, rect2 = find_box_window()
-            if box2 is None:
-                self.state.log("开箱后未找到结果页窗口")
+            # 轮询等待结果页（动画时长不定，最多 15 秒）
+            rect2, btns = self._wait_three_buttons(15.0)
+            if btns is None:
+                self.state.log("未检测到结果页 3 个按钮，尝试关闭页面")
+                b2, r2 = find_box_window()
+                if b2 is not None:
+                    self._click_close(r2)
                 return
+            b2, _ = find_box_window()
+            if b2 is not None:
+                win32.set_foreground(b2["hwnd"])
+                time.sleep(0.15)
 
-            btns = self._red_clusters_in(rect2, 0.6)
-            if len(btns) < 3:
-                self.state.log("未检测到 3 个结果按钮（实际 %d 个）" % len(btns))
-                return
-            nb = btns[2][0]  # 第 3 个 = 「下一个宝箱」
-            self.state.log("点击「下一个宝箱」，开启下个 30 分钟计时")
-            win32.click(rect2[0] + nb[0], rect2[1] + nb[1])
+            # 点击「下一个宝箱」（第 3 个，最右最宽），带验证重试：
+            # 点击生效后结果页的 3 个按钮会消失；若仍存在则说明没点上，重试
+            for attempt in range(3):
+                b_check, r_check = find_box_window()
+                if b_check is None:
+                    break
+                btns_check = self._red_clusters_in(r_check, self._btn_y_frac())
+                if len(btns_check) < 3:
+                    break  # 3 按钮已消失，点击已生效
+                nb = btns_check[2][0]
+                if attempt == 0:
+                    self.state.log("点击「下一个宝箱」，开启下个 30 分钟计时")
+                else:
+                    self.state.log("「下一个宝箱」未生效，重试第 %d 次" % attempt)
+                win32.click(r_check[0] + nb[0], r_check[1] + nb[1])
+                time.sleep(1.5)
             self.state.mark_box()
-            time.sleep(2.0)
-            self._click_close(rect2)
+            time.sleep(1.0)
+            b3, r3 = find_box_window()
+            if b3 is not None:
+                self._click_close(r3)
             self.state.log("开箱完成")
         finally:
             self.box_busy = False
