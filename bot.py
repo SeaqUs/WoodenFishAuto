@@ -171,11 +171,9 @@ class Bot:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self.monitor.start()
         self.state.running = True
         self.state.set_status("运行中")
-        method = self.cfg.get("farm_method", "click")
-        self.state.log("机器人已启动（%s刷功德）" % ("点击木鱼" if method != "keyboard" else "键盘输入note.ms"))
+        self.state.log("机器人已启动")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -191,25 +189,35 @@ class Bot:
         last_box_check = 0.0
         while not self._stop.is_set():
             try:
-                idle = self.monitor.idle_seconds()
-                self.state.idle_seconds = idle
+                farm_on = bool(self.cfg.get("farm_enabled"))
+                box_on = bool(self.cfg.get("box_enabled"))
                 threshold = self.cfg.get("idle_threshold_seconds", 30)
 
-                if idle >= threshold and not self.box_busy:
-                    if self.cfg.get("farm_enabled"):
-                        self._farm_burst()
+                # 空闲监测器：仅刷功德开启时运行（关闭即卸载钩子，不再检测空闲）
+                if farm_on and not self.monitor.is_running():
+                    self.monitor.start()
+                elif not farm_on and self.monitor.is_running():
+                    self.monitor.stop()
 
+                # 刷功德：仅在开启且空闲时执行
+                if not self.box_busy:
+                    if farm_on:
+                        idle = self.monitor.idle_seconds()
+                        self.state.idle_seconds = idle
+                        if idle >= threshold:
+                            self._farm_burst()
+                        else:
+                            self.state.set_status("等待空闲（%.0fs/%ds）" % (idle, threshold))
+                    else:
+                        self.state.idle_seconds = -1.0
+                        self.state.set_status("刷功德已关闭")
+
+                # 宝箱自动化：独立运行，不依赖空闲阈值
+                if box_on and not self.box_busy:
                     now = time.time()
-                    if (
-                        self.cfg.get("box_enabled")
-                        and now - last_box_check >= self.cfg.get("box_check_interval_seconds", 3)
-                    ):
+                    if now - last_box_check >= self.cfg.get("box_check_interval_seconds", 3):
                         last_box_check = now
                         self._box_check()
-                elif not self.box_busy:
-                    self.state.set_status(
-                        "用户活跃，挂起（空闲 %.0fs/%ds）" % (idle, threshold)
-                    )
 
                 self.state.update_countdown()
             except Exception as e:  # noqa: BLE001
@@ -348,9 +356,10 @@ class Bot:
         w, h = r - l, b - t
         if w <= 0 or h <= 0:
             return
-        win32.set_foreground(gw["hwnd"])
-        # 等待"功德+1"点击特效消退（实测约 400ms 消退），避免误判为宝箱图标
-        time.sleep(float(self.cfg.get("box_settle_ms", 600)) / 1000.0)
+        # 注意：不 set_foreground，避免每 3 秒抢焦点干扰用户键盘输入。
+        # 仅在开启刷功德点击时会产生"功德+1"特效，等待其消退以免误判。
+        if self.cfg.get("farm_enabled"):
+            time.sleep(float(self.cfg.get("box_settle_ms", 600)) / 1000.0)
         # 只在图标固定区域（右上角）内扫描，进一步排除木鱼特效/皮肤干扰
         x0, y0, x1, y1 = self._icon_region(w, h)
         ww, hh, buf = win32.capture_region(l, t, w, h)

@@ -518,6 +518,9 @@ class InputMonitor:
     def stop(self):
         self._running = False
 
+    def is_running(self):
+        return self._running
+
     def _run(self):
         hmod = kernel32.GetModuleHandleW(None)
         mouse_cb = _LowLevelHookProc(self._mouse_proc)

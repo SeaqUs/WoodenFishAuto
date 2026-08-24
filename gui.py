@@ -98,7 +98,11 @@ class App:
     def _refresh(self):
         snap = self.bot.state.snapshot()
         self.var_status.set("状态: " + snap["status"])
-        self.var_idle.set("空闲: %.1f 秒" % snap["idle_seconds"])
+        idle = snap["idle_seconds"]
+        if idle < 0:
+            self.var_idle.set("空闲: 未监测（刷功德已关闭）")
+        else:
+            self.var_idle.set("空闲: %.1f 秒" % idle)
         self.var_actions.set("已刷功德: %d 次" % snap["actions_sent"])
         self.var_boxes.set("已开宝箱: %d" % snap["boxes_opened"])
         cd = snap["next_box_countdown"]
